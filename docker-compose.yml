@@ -8,11 +8,47 @@ services:
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+
+  central:
+    build: .
+    image: watermanagement
+    container_name: central
+    command: ["python", "WM_Central.py", "5000", "kafka:29092"]
+    ports:
+      - "5000:5000"
+    volumes:
+      - .:/app
+    depends_on:
+      - kafka
+    stdin_open: true
+    tty: true
+
+  monitor:
+    image: watermanagement
+    entrypoint: ["python", "WM_WS_M.py"]
+    volumes:
+      - .:/app
+    profiles: ["manual"]
+
+  engine:
+    image: watermanagement
+    entrypoint: ["python", "WM_WS_E.py"]
+    volumes:
+      - .:/app
+    profiles: ["manual"]
+
+  operador:
+    image: watermanagement
+    entrypoint: ["python", "WM_FO.py"]
+    volumes:
+      - .:/app
+    profiles: ["manual"]
