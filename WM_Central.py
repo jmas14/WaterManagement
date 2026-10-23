@@ -129,8 +129,7 @@ def atender_monitor(conn, addr):
                 if CONEXIONES.get(id_ws) is conn:
                     del CONEXIONES[id_ws]
                     cambiar_estado(id_ws, DESCONECTADA)
-
-
+                    
 # =========================================================
 # MAIN
 # =========================================================
