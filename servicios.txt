@@ -1,0 +1,5 @@
+# Servicios para WM_FO --fichero: una WS por línea, opcionalmente #segundos
+WS-01#8
+WS-02#5
+WS-99#3
+WS-01#5

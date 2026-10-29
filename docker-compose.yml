@@ -1,3 +1,8 @@
+# Prueba en local de todo el sistema.
+#   Kafka y Central:   docker compose up -d --build
+#   Panel de Central:  docker attach central      (salir sin pararla: Ctrl+P y Ctrl+Q)
+#   Cada WS, Engine y Operador se lanza en su propia terminal con docker compose run
+#   (ver GUIA_PRUEBA_LOCAL.md).
 services:
   kafka:
     image: apache/kafka:3.8.0
@@ -22,7 +27,7 @@ services:
     build: .
     image: watermanagement
     container_name: central
-    command: ["python", "WM_Central.py", "5000", "kafka:29092"]
+    command: ["python", "WM_Central.py", "5000", "kafka:29092", "--db", "/app/wm.db"]
     ports:
       - "5000:5000"
     volumes:
