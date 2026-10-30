@@ -608,6 +608,10 @@ class Central:
         threading.Thread(target=self.bucle_telemetria, daemon=True).start()
         threading.Thread(target=self.vigilancia, daemon=True).start()
         threading.Thread(target=self.menu, daemon=True).start()
+
+        import central_web
+        central_web.arrancar(self)
+        
         try:
             while True:
                 time.sleep(1)

@@ -150,6 +150,7 @@ def main():
 
     try:
         operador = Operador(args.broker, args.id_operador)
+        import operario_web; operario_web.arrancar(operador)
         if args.fichero:
             operador.modo_fichero(args.fichero)
         else:

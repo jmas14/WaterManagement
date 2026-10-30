@@ -230,6 +230,7 @@ def main():
     ip_monitor, puerto_monitor = args.monitor.rsplit(":", 1)
     engine = Engine(args.broker, ip_monitor, int(puerto_monitor))
     log(f"Monitor: {args.monitor} | Broker: {args.broker}")
+    import engine_web; engine_web.arrancar(engine)
 
     threading.Thread(target=engine.conectar_monitor, daemon=True).start()
     threading.Thread(target=engine.bucle_ordenes, daemon=True).start()
