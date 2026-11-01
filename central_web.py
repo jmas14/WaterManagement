@@ -1,7 +1,7 @@
 """
 central_web.py - Panel web de la Central (Figura 2 del enunciado).
 
-Se engancha a WM_Central.py con UNA línea en Central.run():
+Se engancha a WM_Central.py con una línea en Central.run():
         import central_web; central_web.arrancar(self)
 
 Sirve, con el servidor HTTP de la librería estándar (sin instalar nada):
