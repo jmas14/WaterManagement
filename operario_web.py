@@ -31,7 +31,7 @@ RE_LINEA = re.compile(r"^[A-Za-z0-9_-]{1,20}(#[0-9]{1,4})?$")
 
 MOTIVOS = {
     "LIMITE_TIEMPO": "se cumplió el tiempo programado",
-    "FINALIZADO_EN_WS": "se detuvo desde la estación",
+    "FINALIZADO_EN_WS": "riego detenido",
     "FUGA": "se detectó una fuga",
     "BLOQUEO": "la Central bloqueó la estación",
     "DESCONEXION": "la estación se desconectó",
@@ -118,6 +118,8 @@ class _Seguimiento:
             elif tipo == "AUTORIZADO":
                 s["fase"] = "AUTORIZADO"
                 self._evento(f"{id_ws}: autorizado. {msg.get('texto', '')}")
+            elif tipo == "AVISO":
+                self._evento(f"{id_ws}: {msg.get('texto', '')}")
             elif tipo == "RIEGO" and not s["terminado"]:
                 s["fase"] = "REGANDO"
                 s["caudal"] = float(msg.get("caudal") or 0)
@@ -132,8 +134,11 @@ class _Seguimiento:
                          motivo=msg.get("motivo"), motivo_texto=_texto_motivo(msg.get("motivo")),
                          volumen=float(msg.get("volumen") or 0),
                          segundos=float(msg.get("duracion") or 0))
-                self._evento(f"{id_ws}: riego {'finalizado' if msg.get('exito') else 'interrumpido'}, "
-                             f"{_texto_motivo(msg.get('motivo'))}. {s['volumen']:.1f} L en {s['segundos']:.0f} s")
+                if msg.get("motivo") == "FINALIZADO_EN_WS":
+                    self._evento(f"{id_ws}: riego detenido. {s['volumen']:.1f} L en {s['segundos']:.0f} s")
+                else:
+                    self._evento(f"{id_ws}: riego {'finalizado' if msg.get('exito') else 'interrumpido'}, "
+                                 f"{_texto_motivo(msg.get('motivo'))}. {s['volumen']:.1f} L en {s['segundos']:.0f} s")
 
     def _caducar(self):
         """Si la Central lleva más de TIMEOUT_SIN_NOTICIAS sin decir nada, el servicio ha fallado."""
@@ -159,6 +164,17 @@ class _Seguimiento:
             self._nuevo(id_ws, duracion)
             self._evento(f"{id_ws}: solicito riego ({f'{duracion} s' if duracion else 'sin límite'})")
         threading.Thread(target=self.op.solicitar, args=(id_ws, duracion), daemon=True).start()
+        return 202, {"ok": True}
+
+    def parar(self, datos):
+        """Botón «Parar riego»: pide a la Central que detenga el riego en curso de este operario."""
+        with self.lock:
+            s = self.servicio
+            if not s or s["terminado"] or s["fase"] not in ("AUTORIZADO", "REGANDO"):
+                return 409, {"error": "No hay ningún riego en curso que parar."}
+            id_ws = s["id_ws"]
+            self._evento(f"{id_ws}: pido detener el riego")
+        threading.Thread(target=self.op.detener, args=(id_ws,), daemon=True).start()
         return 202, {"ok": True}
 
     def registrar_operador(self, datos):
@@ -236,7 +252,8 @@ def arrancar(operador, puerto=None):
     pagina = _PLANTILLA.replace("/*ESTILO*/", web_comun.ESTILO + web_comun.ESTILO_EXTRA)
     return web_comun.servir(puerto, pagina, seguimiento.estado,
                             {"/api/solicitar": seguimiento.solicitar, "/api/fichero": seguimiento.fichero,
-                             "/api/registro": seguimiento.registrar_operador},
+                             "/api/registro": seguimiento.registrar_operador,
+                             "/api/parar": seguimiento.parar},
                             nombre="FO")
 
 
@@ -251,6 +268,7 @@ _PLANTILLA = r"""<!doctype html>
 <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
 /*ESTILO*/
+.fila-botones { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 </style>
 </head>
 <body>
@@ -295,7 +313,10 @@ _PLANTILLA = r"""<!doctype html>
           <input id="seg" type="number" min="0" max="3600" step="1" value="10" inputmode="numeric">
           <p class="ayuda">Con 0 riega sin l&iacute;mite, hasta que se pare desde la estaci&oacute;n.</p>
         </div>
-        <button class="btn" id="pedir" type="submit">Pedir riego</button>
+        <div class="fila-botones">
+          <button class="btn" id="pedir" type="submit">Pedir riego</button>
+          <button class="btn peligro" id="parar" type="button" disabled>Parar riego</button>
+        </div>
         <p class="retro" id="retro" role="status"></p>
       </form>
       <div>
@@ -434,6 +455,7 @@ function vista(s) {
     return ["PENDIENTE", "Comprobando la estación...", "Esperando a la Central"];
   }
   const m = s.motivo_texto ? ", " + s.motivo_texto : "";
+  if (s.motivo === "FINALIZADO_EN_WS" && s.resultado === "COMPLETADO") return ["DISPONIBLE", "Riego detenido", "Riego detenido"];
   switch (s.resultado) {
     case "COMPLETADO":   return ["DISPONIBLE", "Riego finalizado" + m, "Finalizado"];
     case "INTERRUMPIDO": return ["FUERA_SERVICIO", "Riego interrumpido" + m, "Interrumpido"];
@@ -494,6 +516,9 @@ $("form").addEventListener("submit", async ev => {
   if (!/^[0-9]{1,4}$/.test(txt)) { $("retro").className = "retro error"; $("retro").textContent = "Escribe la duración en segundos (0 para sin límite)."; return; }
   await enviar("/api/solicitar", {id_ws: ws, duracion: parseInt(txt, 10)}, $("retro"));
 });
+$("parar").addEventListener("click", async () => {
+  await enviar("/api/parar", {}, $("retro"));
+});
 $("form-registro").addEventListener("submit", async ev => {
   ev.preventDefault();
   await enviar("/api/registro", {}, $("reg-estado"));
@@ -520,6 +545,8 @@ async function actualizar() {
       $("reg-estado").textContent = d.registro.texto;
     }
     const ocupado = d.fichero || (d.servicio && !d.servicio.terminado);
+    const sv = d.servicio;
+    $("parar").disabled = !(sv && !sv.terminado && (sv.fase === "REGANDO" || sv.fase === "AUTORIZADO"));
     $("pedir").disabled = !!ocupado; $("lanzar").disabled = !!ocupado; $("registrar").disabled = !!ocupado;
     if (d.fichero && !$("retro-fichero").textContent) $("retro-fichero").textContent = "Ejecutando el fichero de servicios...";
     if (!d.fichero && $("retro-fichero").textContent.startsWith("Ejecutando")) $("retro-fichero").textContent = "";

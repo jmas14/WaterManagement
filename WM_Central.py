@@ -417,16 +417,37 @@ class Central:
             self.evento(f"El operador {id_fo} ya estaba registrado")
         self.responder_fo(id_fo, "REGISTRO_OK", None, nuevo=nuevo)
 
+    def procesar_parada(self, msg):
+        """Un operador pide detener el riego que él mismo tiene en curso (PARAR_RIEGO)."""
+        id_fo, id_ws = msg.get("id_fo"), msg.get("id_ws")
+        with self.lock:
+            ws = self.ws.get(id_ws)
+            if ws is None or not ws.regando:
+                aviso = f"No hay ningún riego en curso en {id_ws}"
+            elif ws.id_fo != id_fo:
+                aviso = f"El riego de {id_ws} lo pidió {ws.id_fo}: solo él puede detenerlo"
+            else:
+                aviso = None
+                self.evento(f"El operador {id_fo} detiene el riego de {id_ws}")
+                self.orden_engine(id_ws, "PARAR", motivo="FINALIZADO_EN_WS", id_fo=id_fo)
+        if aviso:
+            self.evento(f"Parada de {id_fo} en {id_ws} no aplicada: {aviso}")
+            self.responder_fo(id_fo, "AVISO", id_ws, texto=aviso)
+        else:
+            self.responder_fo(id_fo, "AVISO", id_ws, texto="Parada enviada a la estación. Cerrando la electroválvula...")
+
     def bucle_solicitudes(self):
         # Sin grupo: si la Central estaba caída, esas solicitudes ya han caducado
         # (el operador las ha dado por fallidas por timeout), así que no se reprocesan.
         consumidor = crear_consumidor(self.broker, TOPIC_SOLICITUDES)
         log("Escuchando solicitudes de riego (Kafka)")
         for _, msg in mensajes(consumidor):
-            if msg["tipo"] in ("SOLICITUD", "REGISTRO"):
+            if msg["tipo"] in ("SOLICITUD", "REGISTRO", "PARAR_RIEGO"):
                 try:
                     if msg["tipo"] == "SOLICITUD":
                         self.procesar_solicitud(msg)
+                    elif msg["tipo"] == "PARAR_RIEGO":
+                        self.procesar_parada(msg)
                     else:
                         self.procesar_registro(msg)
                 except Exception as e:  # un mensaje raro no debe tumbar la Central

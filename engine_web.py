@@ -154,6 +154,7 @@ _PLANTILLA = r"""<!doctype html>
 <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
 /*ESTILO*/
+.fila-botones { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 </style>
 </head>
 <body>
@@ -195,7 +196,6 @@ _PLANTILLA = r"""<!doctype html>
         <div class="acciones">
           <button class="btn peligro" id="b-fuga" type="button">Simular fuga</button>
           <button class="btn ok" id="b-resolver" type="button">Resolver fuga</button>
-          <button class="btn sec" id="b-parar" type="button">Finalizar riego</button>
         </div>
         <form id="form-regar" novalidate style="margin-top: 24px; max-width: 340px;">
           <div class="campo">
@@ -207,7 +207,10 @@ _PLANTILLA = r"""<!doctype html>
             <input id="seg" type="number" min="0" max="3600" step="1" value="10" inputmode="numeric">
             <p class="ayuda">Con 0 riega sin l&iacute;mite. La petici&oacute;n pasa por la Central, que comprueba que el operario est&eacute; registrado.</p>
           </div>
-          <button class="btn" id="b-regar" type="submit">Regar</button>
+          <div class="fila-botones">
+            <button class="btn" id="b-regar" type="submit">Regar</button>
+            <button class="btn peligro" id="b-parar" type="button">Parar riego</button>
+          </div>
         </form>
         <p class="retro" id="retro" role="status"></p>
       </div>
@@ -218,7 +221,7 @@ _PLANTILLA = r"""<!doctype html>
     <div class="panel-cab"><h2 id="t-ev">Mensajes de la estaci&oacute;n</h2></div>
     <ul class="lineas" id="lineas"><li class="vacia">Aqu&iacute; saldr&aacute;n los mensajes del Engine.</li></ul>
   </section>
-  <p class="pie">La p&aacute;gina se actualiza sola cada segundo. Los botones hacen lo mismo que las teclas K, O, R y F de la consola, que sigue funcionando.</p>
+  <p class="pie">La p&aacute;gina se actualiza sola cada segundo. Los botones hacen lo mismo que las teclas K, O, R y F de la consola (F = parar riego), que sigue funcionando.</p>
 </main>
 
 <script>
@@ -267,6 +270,7 @@ function pintar(d) {
     $("e-sub").textContent = "Arranca el Monitor de esta estación";
   } else {
     const f = d.ultimo_fin;
+    if (f && f.motivo === "FINALIZADO_EN_WS") $("e-estado").textContent = "Riego detenido";
     $("e-sub").textContent = f ? "Último riego: " + f.volumen.toFixed(1) + " L en " + Math.round(f.segundos) + " s, " + (MOT[f.motivo] || f.motivo.toLowerCase().replaceAll("_", " "))
                                : "Electroválvula cerrada, esperando órdenes";
   }
@@ -283,7 +287,7 @@ function pintar(d) {
   pintarLineas(d.eventos);
 }
 
-const MOT = {LIMITE_TIEMPO: "se cumplió el tiempo programado", FINALIZADO_EN_WS: "se detuvo desde la estación",
+const MOT = {LIMITE_TIEMPO: "se cumplió el tiempo programado", FINALIZADO_EN_WS: "riego detenido",
   FUGA: "se detectó una fuga", BLOQUEO: "la Central bloqueó la estación", DESCONEXION: "la estación se desconectó",
   SIN_TELEMETRIA: "la Central dejó de recibir datos", APAGADO_ENGINE: "se apagó la estación", ORDEN_CENTRAL: "lo ordenó la Central"};
 

@@ -31,7 +31,7 @@ DURACION_POR_DEFECTO = 10      # s de riego si no se indica otra cosa (0 = sin l
 
 MOTIVOS = {
     "LIMITE_TIEMPO": "se cumplió el tiempo programado",
-    "FINALIZADO_EN_WS": "se detuvo desde la estación",
+    "FINALIZADO_EN_WS": "riego detenido",
     "FUGA": "se detectó una fuga",
     "BLOQUEO": "la Central bloqueó la estación",
     "DESCONEXION": "la estación se desconectó",
@@ -116,6 +116,12 @@ class Operador:
         log("Sin noticias de la Central: no se ha podido registrar")
         return False
 
+    def detener(self, id_ws):
+        """Pide a la Central que pare el riego en curso de este operador en id_ws."""
+        log(f"Pido detener el riego en {id_ws}")
+        return enviar(self.productor, TOPIC_SOLICITUDES,
+                      {"tipo": "PARAR_RIEGO", "id_fo": self.id_fo, "id_ws": id_ws})
+
     def solicitar(self, id_ws, duracion=DURACION_POR_DEFECTO):
         """Pide un riego y muestra su evolución. Devuelve True si terminó con éxito."""
         while not self.respuestas.empty():   # descartar restos de un servicio anterior
@@ -141,6 +147,9 @@ class Operador:
                 log(msg.get("texto", ""))
             elif tipo == "AUTORIZADO":
                 log(f"AUTORIZADO: {msg.get('texto', '')}")
+            elif tipo == "AVISO":
+                print()
+                log(msg.get("texto", ""))
             elif tipo == "DENEGADO":
                 log(f"DENEGADO: {texto_motivo(msg.get('motivo'))}")
                 return False
@@ -151,6 +160,9 @@ class Operador:
             elif tipo == "FIN":
                 print()
                 ok = bool(msg.get("exito"))
+                if msg.get("motivo") == "FINALIZADO_EN_WS":
+                    log(f"Riego detenido. {msg.get('volumen')} L en {msg.get('duracion')} s")
+                    return ok
                 log(f"Riego {'finalizado' if ok else 'interrumpido'}: {texto_motivo(msg.get('motivo'))}. "
                     f"{msg.get('volumen')} L en {msg.get('duracion')} s")
                 return ok

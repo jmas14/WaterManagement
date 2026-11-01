@@ -32,7 +32,7 @@ ID_VALIDO = re.compile(r"^[A-Za-z0-9_-]{1,20}$")
 
 MOTIVOS = {
     "LIMITE_TIEMPO": "se cumplió el tiempo programado",
-    "FINALIZADO_EN_WS": "se detuvo desde la estación",
+    "FINALIZADO_EN_WS": "riego detenido",
     "FUGA": "se detectó una fuga",
     "BLOQUEO": "la Central bloqueó la estación",
     "APAGADO_ENGINE": "se apagó la estación",
@@ -221,7 +221,10 @@ class Engine:
                     f"({f'{dur} s' if dur else 'sin límite'})")
                 self.iniciar_riego(msg.get("id_fo"), msg.get("duracion"))
             elif tipo == "PARAR":
-                log(f"La Central ordena parar el riego: {texto_motivo(msg.get('motivo', 'ORDEN_CENTRAL'))}")
+                if msg.get("id_fo"):
+                    log(f"El operario {msg['id_fo']} detiene el riego")
+                else:
+                    log(f"La Central ordena parar el riego: {texto_motivo(msg.get('motivo', 'ORDEN_CENTRAL'))}")
                 self.detener_riego(msg.get("motivo", "ORDEN_CENTRAL"))
             elif tipo == "BLOQUEAR":
                 if not self.bloqueada:

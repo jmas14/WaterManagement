@@ -25,7 +25,7 @@ services:
     image: arrozconpolloxd/watermanagement:latest
     container_name: central
     restart: unless-stopped
-    command: ["python", "WM_Central.py", "5000", "kafka:29092", "--db", "/data/wm.db"]
+    command: ["sh", "-c", "rm -f /data/wm.db* && exec python WM_Central.py 5000 kafka:29092 --db /data/wm.db"]
     ports:
       - "5000:5000"
       - "8080:8080"
