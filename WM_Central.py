@@ -386,8 +386,14 @@ class Central:
             self.evento(f"Solicitud de {id_fo} en {id_ws} DENEGADA: {motivo}")
             self.responder_fo(id_fo, "DENEGADO", id_ws, motivo=motivo)
 
-        if origen == "FO" and not self.db.operador_existe(id_fo):
-            return denegar("OPERADOR_NO_REGISTRADO")
+        if origen == "FO":
+            # Alta automática: el operador se da de alta la primera vez que
+            # pide un riego, siempre que su ID tenga un formato válido.
+            if not isinstance(id_fo, str) or not ID_VALIDO.match(id_fo):
+                return denegar("OPERADOR_ID_INVALIDO")
+            if not self.db.operador_existe(id_fo):
+                self.db.alta_operador(id_fo)
+                self.evento(f"Alta automática del operador {id_fo}")
         with self.lock:
             ws = self.ws.get(id_ws)
             if ws is None:
@@ -611,7 +617,7 @@ class Central:
 
         import central_web
         central_web.arrancar(self)
-        
+
         try:
             while True:
                 time.sleep(1)

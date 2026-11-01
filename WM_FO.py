@@ -29,6 +29,30 @@ ESPERA_ENTRE_SERVICIOS = 4     # s (lo pide el enunciado)
 TIMEOUT_SIN_NOTICIAS = 10      # s sin mensajes de la Central -> servicio fallido
 DURACION_POR_DEFECTO = 10      # s de riego si no se indica otra cosa (0 = sin límite)
 
+MOTIVOS = {
+    "LIMITE_TIEMPO": "se cumplió el tiempo programado",
+    "FINALIZADO_EN_WS": "se detuvo desde la estación",
+    "FUGA": "se detectó una fuga",
+    "BLOQUEO": "la Central bloqueó la estación",
+    "DESCONEXION": "la estación se desconectó",
+    "SIN_TELEMETRIA": "la estación dejó de enviar datos",
+    "WS_FUGA": "la estación tiene una fuga",
+    "WS_FUERA_SERVICIO": "la estación está fuera de servicio",
+    "WS_DESCONECTADA": "la estación está desconectada",
+    "WS_REGANDO": "la estación ya está regando",
+    "WS_OCUPADA": "la estación está ocupada",
+    "WS_NO_REGISTRADA": "esa estación no existe",
+    "LA_WS_NO_RESPONDE": "la estación no responde",
+    "OPERADOR_ID_INVALIDO": "el ID de operador no es válido",
+}
+
+
+def texto_motivo(m):
+    """Saca mensajes de error correspondientes a estados personalizados"""
+    if m and m.startswith("WS_RECHAZA_"):
+        return "la estación rechazó el riego"
+    return MOTIVOS.get(m, (m or "").replace("_", " ").lower())
+
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] [FO] {msg}", flush=True)
@@ -93,7 +117,7 @@ class Operador:
             elif tipo == "AUTORIZADO":
                 log(f"AUTORIZADO: {msg.get('texto', '')}")
             elif tipo == "DENEGADO":
-                log(f"DENEGADO: {msg.get('motivo')}")
+                log(f"DENEGADO: {texto_motivo(msg.get('motivo'))}")
                 return False
             elif tipo == "RIEGO":
                 print(f"\r    {id_ws} regando: {msg.get('caudal', 0):5.2f} L/min | "
@@ -101,10 +125,10 @@ class Operador:
                       end="", flush=True)
             elif tipo == "FIN":
                 print()
-                resultado = "COMPLETADO" if msg.get("exito") else "INTERRUMPIDO"
-                log(f"Riego {resultado} ({msg.get('motivo')}): {msg.get('volumen')} L "
-                    f"en {msg.get('duracion')} s")
-                return bool(msg.get("exito"))
+                ok = bool(msg.get("exito"))
+                log(f"Riego {'finalizado' if ok else 'interrumpido'}: {texto_motivo(msg.get('motivo'))}. "
+                    f"{msg.get('volumen')} L en {msg.get('duracion')} s")
+                return ok
 
     def modo_fichero(self, ruta):
         servicios = []

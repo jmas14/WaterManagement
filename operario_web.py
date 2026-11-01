@@ -29,6 +29,30 @@ TIMEOUT_SIN_NOTICIAS = 12     # s; WM_FO se rinde a los 10 s, aquí damos 2 s de
 RE_ID = re.compile(r"^[A-Za-z0-9_-]{1,20}$")
 RE_LINEA = re.compile(r"^[A-Za-z0-9_-]{1,20}(#[0-9]{1,4})?$")
 
+MOTIVOS = {
+    "LIMITE_TIEMPO": "se cumplió el tiempo programado",
+    "FINALIZADO_EN_WS": "se detuvo desde la estación",
+    "FUGA": "se detectó una fuga",
+    "BLOQUEO": "la Central bloqueó la estación",
+    "DESCONEXION": "la estación se desconectó",
+    "SIN_TELEMETRIA": "la estación dejó de enviar datos",
+    "WS_FUGA": "la estación tiene una fuga",
+    "WS_FUERA_SERVICIO": "la estación está fuera de servicio",
+    "WS_DESCONECTADA": "la estación está desconectada",
+    "WS_REGANDO": "la estación ya está regando",
+    "WS_OCUPADA": "la estación está ocupada",
+    "WS_NO_REGISTRADA": "esa estación no existe",
+    "LA_WS_NO_RESPONDE": "la estación no responde",
+    "OPERADOR_ID_INVALIDO": "el ID de operador no es válido",
+}
+
+
+def _texto_motivo(m):
+    """Frase natural para el código de motivo de la Central."""
+    if m and m.startswith("WS_RECHAZA_"):
+        return "la estación rechazó el riego"
+    return MOTIVOS.get(m, (m or "").replace("_", " ").lower())
+
 
 def _hora():
     return time.strftime("%H:%M:%S")
@@ -88,14 +112,16 @@ class _Seguimiento:
                 s["volumen"] = float(msg.get("volumen") or 0)
                 s["segundos"] = float(msg.get("segundos") or 0)
             elif tipo == "DENEGADO":
-                s.update(terminado=True, resultado="DENEGADO", motivo=msg.get("motivo"))
-                self._evento(f"{id_ws}: denegado ({msg.get('motivo')})")
+                s.update(terminado=True, resultado="DENEGADO", motivo=msg.get("motivo"),
+                         motivo_texto=_texto_motivo(msg.get("motivo")))
+                self._evento(f"{id_ws}: riego denegado, {_texto_motivo(msg.get('motivo'))}")
             elif tipo == "FIN":
                 s.update(terminado=True, resultado="COMPLETADO" if msg.get("exito") else "INTERRUMPIDO",
-                         motivo=msg.get("motivo"), volumen=float(msg.get("volumen") or 0),
+                         motivo=msg.get("motivo"), motivo_texto=_texto_motivo(msg.get("motivo")),
+                         volumen=float(msg.get("volumen") or 0),
                          segundos=float(msg.get("duracion") or 0))
-                self._evento(f"{id_ws}: riego {'completado' if msg.get('exito') else 'interrumpido'} "
-                             f"({msg.get('motivo')}), {s['volumen']:.1f} L en {s['segundos']:.0f} s")
+                self._evento(f"{id_ws}: riego {'finalizado' if msg.get('exito') else 'interrumpido'}, "
+                             f"{_texto_motivo(msg.get('motivo'))}. {s['volumen']:.1f} L en {s['segundos']:.0f} s")
 
     def _caducar(self):
         """Si la Central lleva más de TIMEOUT_SIN_NOTICIAS sin decir nada, el servicio ha fallado."""
@@ -375,9 +401,9 @@ function vista(s) {
     if (s.fase === "AUTORIZADO") return ["PENDIENTE", "Autorizado, abriendo la electroválvula", "Autorizado"];
     return ["PENDIENTE", "Comprobando la estación...", "Esperando a la Central"];
   }
-  const m = s.motivo ? " (" + s.motivo + ")" : "";
+  const m = s.motivo_texto ? ", " + s.motivo_texto : "";
   switch (s.resultado) {
-    case "COMPLETADO":   return ["DISPONIBLE", "Riego completado" + m, "Completado"];
+    case "COMPLETADO":   return ["DISPONIBLE", "Riego finalizado" + m, "Finalizado"];
     case "INTERRUMPIDO": return ["FUERA_SERVICIO", "Riego interrumpido" + m, "Interrumpido"];
     case "DENEGADO":     return ["FUGA", "Riego denegado" + m, "Denegado"];
     default:             return ["DESCONECTADA", "Sin noticias de la Central", "Servicio fallido"];
