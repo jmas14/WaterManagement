@@ -159,12 +159,15 @@ PAGINA = r"""<!doctype html>
   }
   /* ---------- ordenes de la Central ---------- */
   .cuerpo { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 24px; align-items: start; }
+  .principal { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
   .lateral { display: flex; flex-direction: column; gap: 24px; position: sticky; top: 84px; }
   .lateral .panel { padding: 20px; }
   .lateral .panel-cab { margin-bottom: 16px; }
+  .registro time { min-width: 64px; }
   .orden-campos { display: grid; grid-template-columns: 1fr; gap: 14px; }
-  .registro { list-style: none; margin: 0; padding: 0; max-height: 340px; overflow-y: auto; font-size: .86rem; }
-  .registro li { display: flex; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--borde); overflow-wrap: anywhere; }
+  .registro { list-style: none; margin: 0; padding: 0 8px 0 0; max-height: 360px; overflow-y: auto; font-size: .95rem;
+              color-scheme: light dark; scrollbar-width: thin; scrollbar-color: var(--borde-fuerte) transparent; }
+  .registro li { display: flex; gap: 16px; padding: 9px 0; border-bottom: 1px solid var(--borde); overflow-wrap: anywhere; }
   .registro li:last-child { border-bottom: 0; }
   .registro time { flex: none; color: var(--suave); font-variant-numeric: tabular-nums; }
   .registro .vacia { color: var(--suave); display: block; }
@@ -220,6 +223,7 @@ PAGINA = r"""<!doctype html>
   </section>
 
 <div class="cuerpo">
+  <div class="principal">
   <section class="panel" aria-labelledby="t-panel">
     <div class="panel-cab">
       <h2 id="t-panel">Estaciones de riego</h2>
@@ -227,6 +231,11 @@ PAGINA = r"""<!doctype html>
     </div>
     <div id="rejilla"><p class="vacio">Esperando datos...</p></div>
   </section>
+  <section class="panel" aria-labelledby="t-reg">
+    <div class="panel-cab"><h2 id="t-reg">Registro de la Central</h2></div>
+    <ul class="registro" id="registro"><li class="vacia">Aqu&iacute; saldr&aacute;n los eventos de la Central.</li></ul>
+  </section>
+  </div>
   <aside class="lateral">
   <section class="panel" aria-labelledby="t-orden">
     <div class="panel-cab"><h2 id="t-orden">&Oacute;rdenes de la Central</h2></div>
@@ -255,10 +264,6 @@ PAGINA = r"""<!doctype html>
     </form>
   </section>
 
-  <section class="panel" aria-labelledby="t-reg">
-    <div class="panel-cab"><h2 id="t-reg">Registro de la Central</h2></div>
-    <ul class="registro" id="registro"><li class="vacia">Aqu&iacute; saldr&aacute;n los eventos de la Central.</li></ul>
-  </section>
   </aside>
 </div>
   <p class="pie">La p&aacute;gina se actualiza sola cada segundo.</p>
