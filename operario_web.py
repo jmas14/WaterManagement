@@ -44,6 +44,7 @@ MOTIVOS = {
     "WS_NO_REGISTRADA": "esa estación no existe",
     "LA_WS_NO_RESPONDE": "la estación no responde",
     "OPERADOR_ID_INVALIDO": "el ID de operador no es válido",
+    "OPERADOR_NO_REGISTRADO": "el operador no está registrado: pulsa «Registrarme»",
 }
 
 
@@ -80,6 +81,7 @@ class _Seguimiento:
         self.servicio = None
         self.eventos = collections.deque(maxlen=40)
         self.fichero_activo = False
+        self.registro = None      # último resultado del registro en la Central
 
     # ---------- lo que llega de la Central ----------
     def _evento(self, texto):
@@ -93,6 +95,16 @@ class _Seguimiento:
 
     def registrar(self, msg):
         tipo, id_ws = msg.get("tipo"), msg.get("id_ws")
+        if tipo in ("REGISTRO_OK", "REGISTRO_KO"):
+            with self.lock:
+                if tipo == "REGISTRO_OK":
+                    texto = ("Operador registrado en la Central" if msg.get("nuevo")
+                             else "El operador ya estaba registrado en la Central")
+                else:
+                    texto = "Registro rechazado: " + _texto_motivo(msg.get("motivo"))
+                self.registro = {"ok": tipo == "REGISTRO_OK", "texto": texto}
+                self._evento(texto)
+            return
         with self.lock:
             s = self.servicio
             if tipo in ("INFO", "AUTORIZADO", "DENEGADO") and (s is None or s["terminado"] or s["id_ws"] != id_ws):
@@ -149,6 +161,15 @@ class _Seguimiento:
         threading.Thread(target=self.op.solicitar, args=(id_ws, duracion), daemon=True).start()
         return 202, {"ok": True}
 
+    def registrar_operador(self, datos):
+        with self.lock:
+            if self._ocupado():
+                return 409, {"error": "Ya hay un servicio en curso. Espera a que termine."}
+            self.registro = {"ok": None, "texto": "Registrando en la Central..."}
+            self._evento("Solicito el registro del operador en la Central")
+        threading.Thread(target=self.op.registrar, daemon=True).start()
+        return 202, {"ok": True}
+
     def fichero(self, datos):
         lineas = []
         for n, linea in enumerate(str(datos.get("texto", "")).splitlines(), 1):
@@ -203,7 +224,8 @@ class _Seguimiento:
             self._caducar()
             return {"id_fo": self.op.id_fo, "estaciones": estaciones,
                     "servicio": dict(self.servicio) if self.servicio else None,
-                    "eventos": list(self.eventos), "fichero": self.fichero_activo, "hora": _hora()}
+                    "eventos": list(self.eventos), "fichero": self.fichero_activo, "hora": _hora(),
+                    "registro": dict(self.registro) if self.registro else None}
 
 
 def arrancar(operador, puerto=None):
@@ -213,7 +235,8 @@ def arrancar(operador, puerto=None):
     operador.respuestas = _ColaObservada(seguimiento)
     pagina = _PLANTILLA.replace("/*ESTILO*/", web_comun.ESTILO + web_comun.ESTILO_EXTRA)
     return web_comun.servir(puerto, pagina, seguimiento.estado,
-                            {"/api/solicitar": seguimiento.solicitar, "/api/fichero": seguimiento.fichero},
+                            {"/api/solicitar": seguimiento.solicitar, "/api/fichero": seguimiento.fichero,
+                             "/api/registro": seguimiento.registrar_operador},
                             nombre="FO")
 
 
@@ -249,6 +272,15 @@ _PLANTILLA = r"""<!doctype html>
 
 <main class="pagina">
   <div id="aviso" role="alert">Sin conexi&oacute;n con la aplicaci&oacute;n del operario. Reintentando...</div>
+
+  <section class="panel" aria-labelledby="t-registro">
+    <div class="panel-cab"><h2 id="t-registro">Registro del operador</h2></div>
+    <form id="form-registro" novalidate>
+      <p class="ayuda" id="reg-ayuda">Para pedir riegos, tu operador tiene que estar registrado en la Central.</p>
+      <button class="btn sec" id="registrar" type="submit">Registrarme</button>
+      <p class="retro" id="reg-estado" role="status"></p>
+    </form>
+  </section>
 
   <section class="panel" aria-labelledby="t-pedir">
     <div class="panel-cab"><h2 id="t-pedir">Pedir un riego</h2></div>
@@ -462,6 +494,10 @@ $("form").addEventListener("submit", async ev => {
   if (!/^[0-9]{1,4}$/.test(txt)) { $("retro").className = "retro error"; $("retro").textContent = "Escribe la duración en segundos (0 para sin límite)."; return; }
   await enviar("/api/solicitar", {id_ws: ws, duracion: parseInt(txt, 10)}, $("retro"));
 });
+$("form-registro").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  await enviar("/api/registro", {}, $("reg-estado"));
+});
 $("form-fichero").addEventListener("submit", async ev => {
   ev.preventDefault();
   await enviar("/api/fichero", {texto: $("texto").value}, $("retro-fichero"));
@@ -479,8 +515,12 @@ async function actualizar() {
     $("hora").textContent = d.hora;
     pintarEstaciones(d.estaciones); pintarSelect(d.estaciones);
     pintarServicio(d.servicio); pintarLineas(d.eventos);
+    if (d.registro) {
+      $("reg-estado").className = "retro" + (d.registro.ok === false ? " error" : "");
+      $("reg-estado").textContent = d.registro.texto;
+    }
     const ocupado = d.fichero || (d.servicio && !d.servicio.terminado);
-    $("pedir").disabled = !!ocupado; $("lanzar").disabled = !!ocupado;
+    $("pedir").disabled = !!ocupado; $("lanzar").disabled = !!ocupado; $("registrar").disabled = !!ocupado;
     if (d.fichero && !$("retro-fichero").textContent) $("retro-fichero").textContent = "Ejecutando el fichero de servicios...";
     if (!d.fichero && $("retro-fichero").textContent.startsWith("Ejecutando")) $("retro-fichero").textContent = "";
   } catch (e) {

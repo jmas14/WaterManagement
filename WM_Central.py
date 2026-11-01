@@ -386,14 +386,8 @@ class Central:
             self.evento(f"Solicitud de {id_fo} en {id_ws} DENEGADA: {motivo}")
             self.responder_fo(id_fo, "DENEGADO", id_ws, motivo=motivo)
 
-        if origen == "FO":
-            # Alta automática: el operador se da de alta la primera vez que
-            # pide un riego, siempre que su ID tenga un formato válido.
-            if not isinstance(id_fo, str) or not ID_VALIDO.match(id_fo):
-                return denegar("OPERADOR_ID_INVALIDO")
-            if not self.db.operador_existe(id_fo):
-                self.db.alta_operador(id_fo)
-                self.evento(f"Alta automática del operador {id_fo}")
+        if origen == "FO" and not self.db.operador_existe(id_fo):
+            return denegar("OPERADOR_NO_REGISTRADO")
         with self.lock:
             ws = self.ws.get(id_ws)
             if ws is None:
@@ -407,15 +401,34 @@ class Central:
                           texto=f"{id_ws} disponible. Pidiendo a la estación que abra la electroválvula...")
         self.orden_engine(id_ws, "REGAR", id_fo=id_fo, duracion=duracion)
 
+    def procesar_registro(self, msg):
+        """Un operador pide darse de alta (REGISTRO). Solo se admiten IDs con formato válido."""
+        id_fo = msg.get("id_fo")
+        if not isinstance(id_fo, str) or not ID_VALIDO.match(id_fo):
+            self.evento(f"Registro de operador rechazado: ID no válido ({id_fo!r})")
+            self.responder_fo(id_fo if isinstance(id_fo, str) else None,
+                              "REGISTRO_KO", None, motivo="OPERADOR_ID_INVALIDO")
+            return
+        nuevo = not self.db.operador_existe(id_fo)
+        if nuevo:
+            self.db.alta_operador(id_fo)
+            self.evento(f"Alta del operador {id_fo} (registro desde su aplicación)")
+        else:
+            self.evento(f"El operador {id_fo} ya estaba registrado")
+        self.responder_fo(id_fo, "REGISTRO_OK", None, nuevo=nuevo)
+
     def bucle_solicitudes(self):
         # Sin grupo: si la Central estaba caída, esas solicitudes ya han caducado
         # (el operador las ha dado por fallidas por timeout), así que no se reprocesan.
         consumidor = crear_consumidor(self.broker, TOPIC_SOLICITUDES)
         log("Escuchando solicitudes de riego (Kafka)")
         for _, msg in mensajes(consumidor):
-            if msg["tipo"] == "SOLICITUD":
+            if msg["tipo"] in ("SOLICITUD", "REGISTRO"):
                 try:
-                    self.procesar_solicitud(msg)
+                    if msg["tipo"] == "SOLICITUD":
+                        self.procesar_solicitud(msg)
+                    else:
+                        self.procesar_registro(msg)
                 except Exception as e:  # un mensaje raro no debe tumbar la Central
                     log(f"Error procesando solicitud {msg}: {e}")
 

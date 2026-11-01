@@ -44,11 +44,12 @@ MOTIVOS = {
     "WS_NO_REGISTRADA": "esa estación no existe",
     "LA_WS_NO_RESPONDE": "la estación no responde",
     "OPERADOR_ID_INVALIDO": "el ID de operador no es válido",
+    "OPERADOR_NO_REGISTRADO": "el operador no está registrado: escribe 'registro' primero",
 }
 
 
 def texto_motivo(m):
-    """Saca mensajes de error correspondientes a estados personalizados"""
+    """Traduce el código de motivo que manda la Central a una frase natural."""
     if m and m.startswith("WS_RECHAZA_"):
         return "la estación rechazó el riego"
     return MOTIVOS.get(m, (m or "").replace("_", " ").lower())
@@ -90,6 +91,30 @@ class Operador:
         print(f"WS disponibles: {', '.join(disponibles) or 'ninguna'}")
         for w in self.estaciones:
             print(f"   {w['id']:<10}{w['ubicacion'][:23]:<24}{w['estado']}")
+
+    def registrar(self):
+        """Pide a la Central que dé de alta a este operador. Devuelve True si queda registrado."""
+        while not self.respuestas.empty():   # descartar restos de un servicio anterior
+            self.respuestas.get_nowait()
+        log(f"Solicito el registro del operador {self.id_fo} en la Central")
+        if not enviar(self.productor, TOPIC_SOLICITUDES, {"tipo": "REGISTRO", "id_fo": self.id_fo}):
+            log("No se pudo enviar el registro: Kafka no está disponible")
+            return False
+        limite = time.time() + TIMEOUT_SIN_NOTICIAS
+        while time.time() < limite:
+            try:
+                msg = self.respuestas.get(timeout=1)
+            except queue.Empty:
+                continue
+            if msg.get("tipo") == "REGISTRO_OK":
+                log("Operador registrado en la Central" if msg.get("nuevo")
+                    else "El operador ya estaba registrado en la Central")
+                return True
+            if msg.get("tipo") == "REGISTRO_KO":
+                log(f"Registro rechazado: {texto_motivo(msg.get('motivo'))}")
+                return False
+        log("Sin noticias de la Central: no se ha podido registrar")
+        return False
 
     def solicitar(self, id_ws, duracion=DURACION_POR_DEFECTO):
         """Pide un riego y muestra su evolución. Devuelve True si terminó con éxito."""
@@ -151,7 +176,7 @@ class Operador:
 
     def modo_interactivo(self):
         print("Comandos:  <id_ws> [segundos]  pedir riego (0 = sin límite)  |  "
-              "lista  ver WS  |  salir", flush=True)
+              "registro  darme de alta  |  lista  ver WS  |  salir", flush=True)
         while True:
             partes = input("> ").strip().split()
             if not partes:
@@ -160,6 +185,9 @@ class Operador:
                 break
             if partes[0].lower() == "lista":
                 self.mostrar_red()
+                continue
+            if partes[0].lower() == "registro":
+                self.registrar()
                 continue
             duracion = int(partes[1]) if len(partes) > 1 and partes[1].isdigit() else DURACION_POR_DEFECTO
             self.solicitar(partes[0], duracion)
