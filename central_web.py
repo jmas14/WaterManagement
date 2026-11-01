@@ -158,8 +158,20 @@ PAGINA = r"""<!doctype html>
     .agua { transition: none; }
   }
   /* ---------- ordenes de la Central ---------- */
-  .orden { margin: 0 0 24px; }
-  .orden-campos { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; align-items: end; }
+  .cuerpo { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 24px; align-items: start; }
+  .lateral { display: flex; flex-direction: column; gap: 24px; position: sticky; top: 84px; }
+  .lateral .panel { padding: 20px; }
+  .lateral .panel-cab { margin-bottom: 16px; }
+  .orden-campos { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  .registro { list-style: none; margin: 0; padding: 0; max-height: 340px; overflow-y: auto; font-size: .86rem; }
+  .registro li { display: flex; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--borde); overflow-wrap: anywhere; }
+  .registro li:last-child { border-bottom: 0; }
+  .registro time { flex: none; color: var(--suave); font-variant-numeric: tabular-nums; }
+  .registro .vacia { color: var(--suave); display: block; }
+  @media (max-width: 1000px) {
+    .cuerpo { grid-template-columns: minmax(0, 1fr); }
+    .lateral { position: static; order: -1; }
+  }
   .campo label { display: block; margin: 0 0 6px; font-size: .88rem; font-weight: 700; }
   .campo select, .campo input { width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--borde-fuerte);
                                 background: var(--vidrio-fuerte); color: var(--tinta); font: inherit; }
@@ -207,7 +219,16 @@ PAGINA = r"""<!doctype html>
     <div class="kpi"><p class="kpi-n"><span id="k-volumen">0.0</span><small>L</small></p><p class="kpi-t">Volumen de los riegos en curso</p></div>
   </section>
 
-  <section class="panel orden" aria-labelledby="t-orden">
+<div class="cuerpo">
+  <section class="panel" aria-labelledby="t-panel">
+    <div class="panel-cab">
+      <h2 id="t-panel">Estaciones de riego</h2>
+      <ul class="leyenda" id="leyenda" aria-label="Recuento por estado"></ul>
+    </div>
+    <div id="rejilla"><p class="vacio">Esperando datos...</p></div>
+  </section>
+  <aside class="lateral">
+  <section class="panel" aria-labelledby="t-orden">
     <div class="panel-cab"><h2 id="t-orden">&Oacute;rdenes de la Central</h2></div>
     <form id="form-orden" novalidate>
       <div class="orden-campos">
@@ -234,13 +255,12 @@ PAGINA = r"""<!doctype html>
     </form>
   </section>
 
-  <section class="panel" aria-labelledby="t-panel">
-    <div class="panel-cab">
-      <h2 id="t-panel">Estaciones de riego</h2>
-      <ul class="leyenda" id="leyenda" aria-label="Recuento por estado"></ul>
-    </div>
-    <div id="rejilla"><p class="vacio">Esperando datos...</p></div>
+  <section class="panel" aria-labelledby="t-reg">
+    <div class="panel-cab"><h2 id="t-reg">Registro de la Central</h2></div>
+    <ul class="registro" id="registro"><li class="vacia">Aqu&iacute; saldr&aacute;n los eventos de la Central.</li></ul>
   </section>
+  </aside>
+</div>
   <p class="pie">La p&aacute;gina se actualiza sola cada segundo.</p>
 </main>
 
@@ -333,6 +353,17 @@ async function orden(accion) {
 document.querySelectorAll("[data-accion]").forEach(b => b.addEventListener("click", () => orden(b.dataset.accion)));
 $("c-ws").addEventListener("change", () => { for (const [id, r] of tarjetas) r.el.setAttribute("aria-pressed", String(id === $("c-ws").value)); });
 
+function pintarRegistro(eventos) {
+  const ul = $("registro");
+  ul.replaceChildren();
+  if (!eventos || !eventos.length) { ul.append(el("li", "vacia", "Aquí saldrán los eventos de la Central.")); return; }
+  for (const e of eventos) {
+    const li = el("li"), h = el("time", "", e.hora);
+    li.append(h, document.createTextNode(e.texto));          // textNode: nada se interpreta como HTML
+    ul.append(li);
+  }
+}
+
 function pintarLeyenda(estaciones) {
   const ley = $("leyenda");
   ley.replaceChildren();
@@ -376,6 +407,7 @@ function pintar(datos) {
   for (const [id, r] of tarjetas) if (!vistos.has(id)) { r.el.remove(); tarjetas.delete(id); }
   if (!datos.estaciones.length) rejilla.append(el("p", "vacio", "Todavía no hay estaciones registradas. Arranca un Monitor para darla de alta."));
   pintarControl(datos);
+  pintarRegistro(datos.eventos);
   pintarLeyenda(datos.estaciones);
   pintarResumen(datos.estaciones);
   pintarConexion(true, datos.kafka, datos.hora);
@@ -437,6 +469,16 @@ def _accion(central, datos):
     return 202, {"ok": True}
 
 
+def _eventos(central, n=30):
+    """Últimos eventos que la Central ha guardado en su BD (los mismos que saca por consola)."""
+    try:
+        with central.db.lock:
+            filas = central.db.conn.execute("SELECT ts, texto FROM eventos ORDER BY id DESC LIMIT ?", (n,)).fetchall()
+        return [{"hora": str(f["ts"])[11:], "texto": f["texto"]} for f in filas]
+    except Exception:
+        return []
+
+
 def _crear_manejador(central):
     class Manejador(BaseHTTPRequestHandler):
         def _responder(self, codigo, tipo, cuerpo):
@@ -458,7 +500,7 @@ def _crear_manejador(central):
                     kafka = central.productor is not None
                 operadores = central.db.operadores()
                 cuerpo = json.dumps({"estaciones": estaciones, "kafka": kafka, "operadores": operadores,
-                                     "hora": time.strftime("%H:%M:%S")})
+                                     "eventos": _eventos(central), "hora": time.strftime("%H:%M:%S")})
                 self._responder(200, "application/json; charset=utf-8", cuerpo)
             else:
                 self._responder(404, "text/plain; charset=utf-8", "No encontrado")
