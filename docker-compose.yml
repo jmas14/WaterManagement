@@ -38,6 +38,8 @@ services:
       - kafka
     stdin_open: true
     tty: true
+    environment:
+      - TZ=CET-1CEST,M3.5.0,M10.5.0/3
 
   monitor:
     image: watermanagement
@@ -45,6 +47,8 @@ services:
     volumes:
       - .:/app
     profiles: ["manual"]
+    environment:
+      - TZ=CET-1CEST,M3.5.0,M10.5.0/3
 
   engine:
     image: watermanagement
@@ -52,6 +56,8 @@ services:
     volumes:
       - .:/app
     profiles: ["manual"]
+    environment:
+      - TZ=CET-1CEST,M3.5.0,M10.5.0/3
 
   operador:
     image: watermanagement
@@ -59,3 +65,5 @@ services:
     volumes:
       - .:/app
     profiles: ["manual"]
+    environment:
+      - TZ=CET-1CEST,M3.5.0,M10.5.0/3

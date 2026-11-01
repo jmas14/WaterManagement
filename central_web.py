@@ -1,12 +1,15 @@
 """
 central_web.py - Panel web de la Central (Figura 2 del enunciado).
 
-Se engancha a WM_Central.py con una línea en Central.run():
+Se engancha a WM_Central.py con UNA línea en Central.run():
         import central_web; central_web.arrancar(self)
 
 Sirve, con el servidor HTTP de la librería estándar (sin instalar nada):
   GET /             -> la página del panel (HTML incrustado aquí abajo)
   GET /api/estado   -> JSON con las estaciones, para que la página lo consulte cada segundo
+
+  POST /api/accion  -> órdenes de la Central (punto 11): regar, bloquear y activar una o todas las WS.
+                       Reutiliza los mismos métodos que el menú de la consola (procesar_solicitud, bloquear, activar).
 
 Puerto: variable de entorno PORT (la que Railway asigna) o, si no existe, 8080.
 
@@ -17,11 +20,13 @@ Colores por estado (enunciado):
 
 import json
 import os
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PUERTO_POR_DEFECTO = 8080
+RE_ID = re.compile(r"^[A-Za-z0-9_-]{1,20}$")
 
 PAGINA = r"""<!doctype html>
 <html lang="es">
@@ -152,6 +157,23 @@ PAGINA = r"""<!doctype html>
     .tarjeta[data-estado="REGANDO"], .agua::before, .pildora[data-ok="true"] .punto { animation: none; }
     .agua { transition: none; }
   }
+  /* ---------- ordenes de la Central ---------- */
+  .orden { margin: 0 0 24px; }
+  .orden-campos { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; align-items: end; }
+  .campo label { display: block; margin: 0 0 6px; font-size: .88rem; font-weight: 700; }
+  .campo select, .campo input { width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--borde-fuerte);
+                                background: var(--vidrio-fuerte); color: var(--tinta); font: inherit; }
+  .acciones { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0 0; }
+  .btn { padding: 10px 20px; border: 0; border-radius: 12px; font: inherit; font-weight: 800; color: #fff; cursor: pointer;
+         background: linear-gradient(160deg, #7cc8ff, #4a7fe8); box-shadow: var(--sombra-1); }
+  .btn.bloq { background: linear-gradient(160deg, #ffc58a, #f09a3e); color: var(--tx-oscuro); }
+  .btn.act { background: linear-gradient(160deg, #3ab67c, #2a9462); }
+  .btn:disabled { opacity: .55; cursor: default; }
+  .ayuda { margin: 8px 0 0; font-size: .85rem; color: var(--suave); }
+  .retro { margin: 12px 0 0; font-size: .92rem; font-weight: 700; min-height: 1.2em; }
+  .retro.error { color: var(--mal); }
+  .tarjeta { cursor: pointer; }
+  .tarjeta[aria-pressed="true"] { outline: 3px solid #4a7fe8; outline-offset: 2px; }
   @media (max-width: 560px) {
     .barra-in, .pagina { padding-left: 16px; padding-right: 16px; }
     .panel { padding: 16px; border-radius: 20px; }
@@ -183,6 +205,33 @@ PAGINA = r"""<!doctype html>
     <div class="kpi"><p class="kpi-n" id="k-regando">0</p><p class="kpi-t">Regando ahora</p></div>
     <div class="kpi"><p class="kpi-n"><span id="k-caudal">0.0</span><small>L/min</small></p><p class="kpi-t">Caudal total en curso</p></div>
     <div class="kpi"><p class="kpi-n"><span id="k-volumen">0.0</span><small>L</small></p><p class="kpi-t">Volumen de los riegos en curso</p></div>
+  </section>
+
+  <section class="panel orden" aria-labelledby="t-orden">
+    <div class="panel-cab"><h2 id="t-orden">&Oacute;rdenes de la Central</h2></div>
+    <form id="form-orden" novalidate>
+      <div class="orden-campos">
+        <div class="campo">
+          <label for="c-ws">Estaci&oacute;n</label>
+          <select id="c-ws"><option value="*">Todas las estaciones</option></select>
+        </div>
+        <div class="campo">
+          <label for="c-op">Operario</label>
+          <select id="c-op"><option value="CENTRAL">CENTRAL</option></select>
+        </div>
+        <div class="campo">
+          <label for="c-seg">Duraci&oacute;n en segundos</label>
+          <input id="c-seg" type="number" min="0" max="3600" step="1" value="10" inputmode="numeric">
+        </div>
+      </div>
+      <p class="ayuda">Con 0 el riego no tiene l&iacute;mite y sigue hasta que se bloquee la estaci&oacute;n o se pare desde ella. Tambi&eacute;n puedes elegir una estaci&oacute;n pulsando su tarjeta.</p>
+      <div class="acciones">
+        <button class="btn" type="button" data-accion="regar">Iniciar riego</button>
+        <button class="btn bloq" type="button" data-accion="bloquear">Bloquear</button>
+        <button class="btn act" type="button" data-accion="activar">Activar</button>
+      </div>
+      <p class="retro" id="c-retro" role="status"></p>
+    </form>
   </section>
 
   <section class="panel" aria-labelledby="t-panel">
@@ -243,6 +292,47 @@ function actualizarTarjeta(r, e) {
   }
 }
 
+let firmaWs = "", firmaOp = "";
+function pintarControl(datos) {
+  const sel = $("c-ws"), actual = sel.value || "*";
+  const firma = datos.estaciones.map(e => e.id).join(",");
+  if (firma !== firmaWs) {                          // solo se reconstruye si cambia la lista, para no cerrar el desplegable
+    firmaWs = firma;
+    sel.replaceChildren(new Option("Todas las estaciones", "*"));
+    for (const e of datos.estaciones) sel.append(new Option(e.id + " - " + e.ubicacion, e.id));
+    sel.value = [...sel.options].some(o => o.value === actual) ? actual : "*";
+  }
+  const op = $("c-op"), opActual = op.value || "CENTRAL";
+  const firmaO = (datos.operadores || []).join(",");
+  if (firmaO !== firmaOp) {
+    firmaOp = firmaO;
+    op.replaceChildren(new Option("CENTRAL", "CENTRAL"));
+    for (const o of datos.operadores || []) op.append(new Option(o, o));
+    op.value = [...op.options].some(o => o.value === opActual) ? opActual : "CENTRAL";
+  }
+  for (const [id, r] of tarjetas) r.el.setAttribute("aria-pressed", String(id === sel.value));
+}
+
+async function orden(accion) {
+  const retro = $("c-retro"), txt = $("c-seg").value.trim();
+  if (accion === "regar" && !/^[0-9]{1,4}$/.test(txt)) {
+    retro.className = "retro error"; retro.textContent = "Escribe la duración en segundos (0 para sin límite)."; return;
+  }
+  retro.className = "retro"; retro.textContent = "Enviando...";
+  try {
+    const r = await fetch("/api/accion", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({accion, ws: $("c-ws").value, duracion: parseInt(txt || "0", 10), operario: $("c-op").value})});
+    const j = await r.json();
+    if (!r.ok) { retro.className = "retro error"; retro.textContent = j.error || "No se pudo enviar la orden."; return; }
+    retro.textContent = "Orden enviada. El resultado aparece en las tarjetas.";
+    setTimeout(() => { if (retro.textContent.startsWith("Orden enviada")) retro.textContent = ""; }, 4000);
+  } catch (e) {
+    retro.className = "retro error"; retro.textContent = "Sin conexión con la Central.";
+  }
+}
+document.querySelectorAll("[data-accion]").forEach(b => b.addEventListener("click", () => orden(b.dataset.accion)));
+$("c-ws").addEventListener("change", () => { for (const [id, r] of tarjetas) r.el.setAttribute("aria-pressed", String(id === $("c-ws").value)); });
+
 function pintarLeyenda(estaciones) {
   const ley = $("leyenda");
   ley.replaceChildren();
@@ -280,10 +370,12 @@ function pintar(datos) {
     if (!tarjetas.has(e.id)) tarjetas.set(e.id, crearTarjeta());
     const r = tarjetas.get(e.id);
     actualizarTarjeta(r, e);
+    r.el.onclick = () => { $("c-ws").value = e.id; $("c-ws").dispatchEvent(new Event("change")); };
     if (rejilla.children[i] !== r.el) rejilla.insertBefore(r.el, rejilla.children[i] || null);
   });
   for (const [id, r] of tarjetas) if (!vistos.has(id)) { r.el.remove(); tarjetas.delete(id); }
   if (!datos.estaciones.length) rejilla.append(el("p", "vacio", "Todavía no hay estaciones registradas. Arranca un Monitor para darla de alta."));
+  pintarControl(datos);
   pintarLeyenda(datos.estaciones);
   pintarResumen(datos.estaciones);
   pintarConexion(true, datos.kafka, datos.hora);
@@ -308,6 +400,43 @@ setInterval(actualizar, 1000);
 """
 
 
+def _accion(central, datos):
+    """Órdenes del punto 11: regar, bloquear o activar una WS (o todas). Devuelve (código HTTP, JSON)."""
+    accion, ws = datos.get("accion"), datos.get("ws")
+    if accion not in ("regar", "bloquear", "activar"):
+        return 400, {"error": "Acción no válida."}
+    with central.lock:
+        if ws == "*":
+            ids = sorted(central.ws)
+        elif isinstance(ws, str) and ws in central.ws:
+            ids = [ws]
+        else:
+            ids = []
+    if not ids:
+        return 400, {"error": "Elige una estación que exista."}
+    duracion, operario = None, "CENTRAL"
+    if accion == "regar":
+        duracion = datos.get("duracion", 10)
+        if not isinstance(duracion, int) or isinstance(duracion, bool) or not 0 <= duracion <= 3600:
+            return 400, {"error": "La duración debe ser un número de segundos entre 0 y 3600."}
+        operario = datos.get("operario") or "CENTRAL"
+        if operario != "CENTRAL" and not (isinstance(operario, str) and RE_ID.match(operario)
+                                          and central.db.operador_existe(operario)):
+            return 400, {"error": "Ese operario no está registrado."}
+
+    def trabajo():
+        for id_ws in ids:
+            if accion == "regar":
+                central.procesar_solicitud({"id_fo": operario, "id_ws": id_ws, "origen": "CENTRAL",
+                                            "duracion": duracion or None})
+            elif accion == "bloquear":
+                central.bloquear(id_ws)
+            else:
+                central.activar(id_ws)
+    threading.Thread(target=trabajo, daemon=True).start()
+    return 202, {"ok": True}
+
+
 def _crear_manejador(central):
     class Manejador(BaseHTTPRequestHandler):
         def _responder(self, codigo, tipo, cuerpo):
@@ -327,11 +456,32 @@ def _crear_manejador(central):
                 with central.lock:
                     estaciones = [ws.resumen() for ws in sorted(central.ws.values(), key=lambda w: w.id)]
                     kafka = central.productor is not None
-                cuerpo = json.dumps({"estaciones": estaciones, "kafka": kafka,
+                operadores = central.db.operadores()
+                cuerpo = json.dumps({"estaciones": estaciones, "kafka": kafka, "operadores": operadores,
                                      "hora": time.strftime("%H:%M:%S")})
                 self._responder(200, "application/json; charset=utf-8", cuerpo)
             else:
                 self._responder(404, "text/plain; charset=utf-8", "No encontrado")
+
+        def do_POST(self):
+            if self.path.split("?")[0] != "/api/accion":
+                return self._responder(404, "application/json; charset=utf-8", json.dumps({"error": "No encontrado"}))
+            if not self.headers.get("Content-Type", "").startswith("application/json"):
+                return self._responder(415, "application/json; charset=utf-8", json.dumps({"error": "Se espera application/json"}))
+            largo = int(self.headers.get("Content-Length") or 0)
+            if largo > 65536:
+                return self._responder(413, "application/json; charset=utf-8", json.dumps({"error": "Petición demasiado grande"}))
+            try:
+                datos = json.loads(self.rfile.read(largo) or b"{}")
+                if not isinstance(datos, dict):
+                    raise ValueError
+            except ValueError:
+                return self._responder(400, "application/json; charset=utf-8", json.dumps({"error": "JSON no válido"}))
+            try:
+                codigo, cuerpo = _accion(central, datos)
+            except Exception as e:  # una orden que falla no debe tumbar el servidor
+                codigo, cuerpo = 500, {"error": str(e)}
+            self._responder(codigo, "application/json; charset=utf-8", json.dumps(cuerpo))
 
         def log_message(self, *args):
             pass  # no ensuciar el panel de consola con una línea por petición
