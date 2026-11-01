@@ -266,7 +266,6 @@ PAGINA = r"""<!doctype html>
 
   </aside>
 </div>
-  <p class="pie">La p&aacute;gina se actualiza sola cada segundo.</p>
 </main>
 
 <script>

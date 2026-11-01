@@ -350,7 +350,7 @@ _PLANTILLA = r"""<!doctype html>
       <div class="campo">
         <label for="texto">Un servicio por l&iacute;nea</label>
         <textarea id="texto" spellcheck="false" placeholder="WS-01&#10;WS-02#15&#10;# las l&iacute;neas que empiezan por # se ignoran"></textarea>
-        <p class="ayuda">WS-02#15 riega 15 segundos. Sin n&uacute;mero, riega 10. Se pide el primero y, cuando termina (bien o mal), se esperan 4 segundos para pedir el siguiente.</p>
+        <p class="ayuda">Sin especificar tiempo, el riego dura 10 segundos. Con WS-02#15 dura 15.</p>
       </div>
       <button class="btn sec" id="lanzar" type="submit">Ejecutar servicios</button>
       <p class="retro" id="retro-fichero" role="status"></p>

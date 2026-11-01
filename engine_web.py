@@ -221,7 +221,6 @@ _PLANTILLA = r"""<!doctype html>
     <div class="panel-cab"><h2 id="t-ev">Mensajes de la estaci&oacute;n</h2></div>
     <ul class="lineas" id="lineas"><li class="vacia">Aqu&iacute; saldr&aacute;n los mensajes del Engine.</li></ul>
   </section>
-  <p class="pie">La p&aacute;gina se actualiza sola cada segundo. Los botones hacen lo mismo que las teclas K, O, R y F de la consola (F = parar riego), que sigue funcionando.</p>
 </main>
 
 <script>
