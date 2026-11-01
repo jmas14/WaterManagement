@@ -16,17 +16,52 @@ Kafka:
 
 import argparse
 import random
+import re
 import socket
 import threading
 import time
 
 from protocol import (ENQ, ACK, FinConversacion, recibir_byte,
                       recibir_mensaje, enviar_mensaje, unir, separar)
-from kafka_comun import (TOPIC_ORDENES, TOPIC_TELEMETRIA, TOPIC_SOLICITUDES,
+from kafka_comun import (TOPIC_ORDENES, TOPIC_TELEMETRIA, TOPIC_SOLICITUDES, TOPIC_RESPUESTAS,
                          asegurar_topics, crear_productor, crear_consumidor,
                          enviar, mensajes)
 
 CAUDAL_MIN, CAUDAL_MAX = 8.0, 15.0   # L/min simulados por el caudalímetro
+ID_VALIDO = re.compile(r"^[A-Za-z0-9_-]{1,20}$")
+
+MOTIVOS = {
+    "LIMITE_TIEMPO": "se cumplió el tiempo programado",
+    "FINALIZADO_EN_WS": "se detuvo desde la estación",
+    "FUGA": "se detectó una fuga",
+    "BLOQUEO": "la Central bloqueó la estación",
+    "APAGADO_ENGINE": "se apagó la estación",
+    "ORDEN_CENTRAL": "lo ordenó la Central",
+    "DESCONEXION": "la estación perdió la conexión con la Central",
+    "SIN_TELEMETRIA": "la Central dejó de recibir datos",
+    "OCUPADA": "ya está regando",
+    "FUERA_SERVICIO": "está fuera de servicio",
+}
+
+
+def texto_motivo(m):
+    return MOTIVOS.get(m, (m or "").replace("_", " ").lower())
+
+
+DENEGACIONES = {
+    "OPERADOR_NO_REGISTRADO": "el operario no está registrado en la Central",
+    "WS_FUGA": "la estación tiene una fuga",
+    "WS_FUERA_SERVICIO": "la estación está fuera de servicio",
+    "WS_DESCONECTADA": "la estación está desconectada",
+    "WS_REGANDO": "la estación ya está regando",
+    "WS_OCUPADA": "la estación está ocupada",
+    "WS_NO_REGISTRADA": "esa estación no está registrada",
+    "LA_WS_NO_RESPONDE": "la estación no ha respondido a tiempo",
+}
+
+
+def texto_denegacion(m):
+    return DENEGACIONES.get(m, (m or "").replace("_", " ").lower())
 
 
 def log(msg):
@@ -96,7 +131,7 @@ class Engine:
             motivo = ("FUGA" if self.averia else "FUERA_SERVICIO" if self.bloqueada
                       else "OCUPADA" if self.riego else None)
             if motivo:
-                log(f"Rechazo el riego de {id_fo}: {motivo}")
+                log(f"Rechazo el riego de {id_fo}: la estación {texto_motivo(motivo)}" if motivo != "FUGA" else f"Rechazo el riego de {id_fo}: la estación tiene una fuga")
                 self.publicar("RECHAZO", id_fo=id_fo, motivo=motivo)
                 return
             self.parar_riego.clear()
@@ -133,9 +168,39 @@ class Engine:
         segundos = time.time() - inicio
         with self.lock:
             self.riego = None
-        log(f"<<< ELECTROVÁLVULA CERRADA ({motivo}). Total {volumen:.2f} L en {segundos:.0f} s")
+        log(f"<<< ELECTROVÁLVULA CERRADA: {texto_motivo(motivo)}")
+        log(f"Riego de {r['id_fo']} finalizado: {volumen:.2f} L en {segundos:.0f} s")
         self.publicar("FIN", id_fo=r["id_fo"], motivo=motivo,
                       volumen=round(volumen, 2), segundos=round(segundos, 1))
+
+    # =====================================================
+    # RIEGO MANUAL DESDE LA ESTACIÓN (lo pide un operario)
+    # =====================================================
+
+    def pedir_riego_manual(self, id_fo, duracion):
+        """Un operario pide el riego desde el menú de la estación. La Central lo valida
+        como cualquier otra petición de operario (incluido que esté registrado)."""
+        if not self.id_ws or not self.productor:
+            log("Todavía no tengo ID o no estoy conectado a Kafka")
+            return False
+        if not id_fo or not ID_VALIDO.match(id_fo):
+            log("Riego manual cancelado: hay que indicar un operario válido (letras, números, - o _)")
+            return False
+        log(f"El operario {id_fo} solicita a la Central un riego manual en esta estación")
+        enviar(self.productor, TOPIC_SOLICITUDES,
+               {"tipo": "SOLICITUD", "origen": "FO", "id_fo": id_fo,
+                "id_ws": self.id_ws, "duracion": duracion or None})
+        return True
+
+    def bucle_respuestas(self):
+        """Para enseñar en pantalla cuando la Central deniega un riego de esta estación."""
+        asegurar_topics(self.broker)
+        consumidor = crear_consumidor(self.broker, TOPIC_RESPUESTAS)
+        for _, msg in mensajes(consumidor):
+            if (self.id_ws and msg.get("id_ws") == self.id_ws and msg["tipo"] == "DENEGADO"
+                    and not str(msg.get("motivo", "")).startswith("WS_RECHAZA_")):
+                log(f"La Central deniega el riego de {msg.get('id_fo')}: "
+                    f"{texto_denegacion(msg.get('motivo'))}")
 
     # =====================================================
     # KAFKA: ÓRDENES DE LA CENTRAL
@@ -151,9 +216,12 @@ class Engine:
                 continue  # no es para esta WS
             tipo = msg["tipo"]
             if tipo == "REGAR":
+                dur = msg.get("duracion")
+                log(f"La Central ordena regar para {msg.get('id_fo')} "
+                    f"({f'{dur} s' if dur else 'sin límite'})")
                 self.iniciar_riego(msg.get("id_fo"), msg.get("duracion"))
             elif tipo == "PARAR":
-                log(f"La Central ordena parar el riego ({msg.get('motivo')})")
+                log(f"La Central ordena parar el riego: {texto_motivo(msg.get('motivo', 'ORDEN_CENTRAL'))}")
                 self.detener_riego(msg.get("motivo", "ORDEN_CENTRAL"))
             elif tipo == "BLOQUEAR":
                 if not self.bloqueada:
@@ -201,10 +269,8 @@ class Engine:
                     log("Todavía no tengo ID o no estoy conectado a Kafka")
                     continue
                 duracion = int(partes[1]) if len(partes) > 1 and partes[1].isdigit() else None
-                log("Solicito a la Central un riego manual en esta estación")
-                enviar(self.productor, TOPIC_SOLICITUDES,
-                       {"tipo": "SOLICITUD", "origen": "WS", "id_fo": f"LOCAL-{self.id_ws}",
-                        "id_ws": self.id_ws, "duracion": duracion})
+                id_fo = input("Operario que pide el riego: ").strip()
+                self.pedir_riego_manual(id_fo, duracion)
             elif opcion == "F":
                 if self.riego:
                     self.detener_riego("FINALIZADO_EN_WS")
@@ -234,6 +300,7 @@ def main():
 
     threading.Thread(target=engine.conectar_monitor, daemon=True).start()
     threading.Thread(target=engine.bucle_ordenes, daemon=True).start()
+    threading.Thread(target=engine.bucle_respuestas, daemon=True).start()
     try:
         engine.menu()
     except KeyboardInterrupt:

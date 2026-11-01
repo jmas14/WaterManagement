@@ -16,11 +16,16 @@ Puerto: variable de entorno WEB_PORT (8082 por defecto).
 
 import collections
 import os
+import re
 import sys
 import threading
 import time
 
 import web_comun
+
+RE_ID = re.compile(r"^[A-Za-z0-9_-]{1,20}$")
+RECHAZOS = {"FUGA": "la estación tiene una fuga", "FUERA_SERVICIO": "la estación está fuera de servicio",
+            "OCUPADA": "la estación ya está regando"}
 
 PUERTO_POR_DEFECTO = 8082
 
@@ -74,7 +79,7 @@ class _Panel:
                                    "volumen": float(d.get("volumen") or 0), "segundos": float(d.get("segundos") or 0)}
                 self.vivo = {"caudal": 0.0, "volumen": 0.0, "segundos": 0.0}
             elif tipo == "RECHAZO":
-                self.eventos.appendleft({"hora": _hora(), "texto": f"Riego de {d.get('id_fo')} rechazado ({d.get('motivo')})"})
+                self.eventos.appendleft({"hora": _hora(), "texto": f"Riego de {d.get('id_fo')} rechazado: {RECHAZOS.get(d.get('motivo'), str(d.get('motivo')).lower())}"})
 
     # ---------- acciones: lo mismo que las teclas del menú ----------
     def accion(self, datos):
@@ -96,11 +101,10 @@ class _Panel:
             seg = datos.get("segundos")
             if seg is not None and (not isinstance(seg, int) or isinstance(seg, bool) or not 0 <= seg <= 3600):
                 return 400, {"error": "La duración debe estar entre 0 y 3600 segundos."}
-            from kafka_comun import TOPIC_SOLICITUDES, enviar
-            self.log("Solicito a la Central un riego manual en esta estación")
-            enviar(e.productor, TOPIC_SOLICITUDES,
-                   {"tipo": "SOLICITUD", "origen": "WS", "id_fo": f"LOCAL-{e.id_ws}",
-                    "id_ws": e.id_ws, "duracion": seg or None})
+            operario = str(datos.get("operario", "")).strip()
+            if not RE_ID.match(operario):
+                return 400, {"error": "Indica el operario que pide el riego (letras, números, - o _)."}
+            e.pedir_riego_manual(operario, seg)     # la Central comprueba que esté registrado
             return 202, {"ok": True}
         if accion == "parar":
             if not e.riego:
@@ -195,9 +199,13 @@ _PLANTILLA = r"""<!doctype html>
         </div>
         <form id="form-regar" novalidate style="margin-top: 24px; max-width: 340px;">
           <div class="campo">
+            <label for="op">Operario que pide el riego</label>
+            <input id="op" type="text" maxlength="20" autocomplete="off" placeholder="FO-01">
+          </div>
+          <div class="campo">
             <label for="seg">Riego manual, duraci&oacute;n en segundos</label>
             <input id="seg" type="number" min="0" max="3600" step="1" value="10" inputmode="numeric">
-            <p class="ayuda">Con 0 riega sin l&iacute;mite. La petici&oacute;n pasa por la Central, que la valida como la de cualquier operario.</p>
+            <p class="ayuda">Con 0 riega sin l&iacute;mite. La petici&oacute;n pasa por la Central, que comprueba que el operario est&eacute; registrado.</p>
           </div>
           <button class="btn" id="b-regar" type="submit">Regar</button>
         </form>
@@ -259,7 +267,7 @@ function pintar(d) {
     $("e-sub").textContent = "Arranca el Monitor de esta estación";
   } else {
     const f = d.ultimo_fin;
-    $("e-sub").textContent = f ? "Último riego: " + f.volumen.toFixed(1) + " L en " + Math.round(f.segundos) + " s (" + f.motivo + ")"
+    $("e-sub").textContent = f ? "Último riego: " + f.volumen.toFixed(1) + " L en " + Math.round(f.segundos) + " s, " + (MOT[f.motivo] || f.motivo.toLowerCase().replaceAll("_", " "))
                                : "Electroválvula cerrada, esperando órdenes";
   }
   $("p-mon").dataset.ok = d.id_ws ? "true" : "unknown";
@@ -274,6 +282,10 @@ function pintar(d) {
   $("b-regar").disabled = !d.id_ws || !d.kafka || !!r;
   pintarLineas(d.eventos);
 }
+
+const MOT = {LIMITE_TIEMPO: "se cumplió el tiempo programado", FINALIZADO_EN_WS: "se detuvo desde la estación",
+  FUGA: "se detectó una fuga", BLOQUEO: "la Central bloqueó la estación", DESCONEXION: "la estación se desconectó",
+  SIN_TELEMETRIA: "la Central dejó de recibir datos", APAGADO_ENGINE: "se apagó la estación", ORDEN_CENTRAL: "lo ordenó la Central"};
 
 async function accion(cuerpo) {
   const retro = $("retro");
@@ -294,7 +306,9 @@ $("form-regar").addEventListener("submit", ev => {
   ev.preventDefault();
   const txt = $("seg").value.trim();
   if (!/^[0-9]{1,4}$/.test(txt)) { $("retro").className = "retro error"; $("retro").textContent = "Escribe la duración en segundos (0 para sin límite)."; return; }
-  accion({accion: "regar", segundos: parseInt(txt, 10)});
+  const op = $("op").value.trim();
+  if (!/^[A-Za-z0-9_-]{1,20}$/.test(op)) { $("retro").className = "retro error"; $("retro").textContent = "Indica el operario que pide el riego."; return; }
+  accion({accion: "regar", segundos: parseInt(txt, 10), operario: op});
 });
 
 async function actualizar() {
