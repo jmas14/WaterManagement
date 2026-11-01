@@ -354,7 +354,7 @@ _PLANTILLA = r"""<!doctype html>
       </div>
       <div class="fila-botones">
         <button class="btn sec" id="lanzar" type="submit">Ejecutar servicios</button>
-        <button class="btn" id="subir" type="button">Subir fichero .txt y ejecutar</button>
+        <button class="btn" id="subir" type="button">Subir fichero .txt</button>
         <input id="archivo" type="file" accept=".txt,text/plain" hidden>
       </div>
       <p class="retro" id="retro-fichero" role="status"></p>
