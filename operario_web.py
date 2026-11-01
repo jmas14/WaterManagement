@@ -352,7 +352,11 @@ _PLANTILLA = r"""<!doctype html>
         <textarea id="texto" spellcheck="false" placeholder="WS-01&#10;WS-02#15&#10;# las l&iacute;neas que empiezan por # se ignoran"></textarea>
         <p class="ayuda">Sin especificar tiempo, el riego dura 10 segundos. Con WS-02#15 dura 15.</p>
       </div>
-      <button class="btn sec" id="lanzar" type="submit">Ejecutar servicios</button>
+      <div class="fila-botones">
+        <button class="btn sec" id="lanzar" type="submit">Ejecutar servicios</button>
+        <button class="btn" id="subir" type="button">Subir fichero .txt y ejecutar</button>
+        <input id="archivo" type="file" accept=".txt,text/plain" hidden>
+      </div>
       <p class="retro" id="retro-fichero" role="status"></p>
     </form>
   </section>
@@ -523,6 +527,17 @@ $("form-registro").addEventListener("submit", async ev => {
   ev.preventDefault();
   await enviar("/api/registro", {}, $("reg-estado"));
 });
+$("subir").addEventListener("click", () => $("archivo").click());
+$("archivo").addEventListener("change", async () => {
+  const f = $("archivo").files[0];
+  $("archivo").value = "";
+  const retro = $("retro-fichero");
+  if (!f) return;
+  if (f.size > 60000) { retro.className = "retro error"; retro.textContent = "El fichero es demasiado grande."; return; }
+  const texto = await f.text();
+  $("texto").value = texto;
+  await enviar("/api/fichero", {texto}, retro);
+});
 $("form-fichero").addEventListener("submit", async ev => {
   ev.preventDefault();
   await enviar("/api/fichero", {texto: $("texto").value}, $("retro-fichero"));
@@ -547,7 +562,7 @@ async function actualizar() {
     const ocupado = d.fichero || (d.servicio && !d.servicio.terminado);
     const sv = d.servicio;
     $("parar").disabled = !(sv && !sv.terminado && (sv.fase === "REGANDO" || sv.fase === "AUTORIZADO"));
-    $("pedir").disabled = !!ocupado; $("lanzar").disabled = !!ocupado; $("registrar").disabled = !!ocupado;
+    $("pedir").disabled = !!ocupado; $("lanzar").disabled = !!ocupado; $("subir").disabled = !!ocupado; $("registrar").disabled = !!ocupado;
     if (d.fichero && !$("retro-fichero").textContent) $("retro-fichero").textContent = "Ejecutando el fichero de servicios...";
     if (!d.fichero && $("retro-fichero").textContent.startsWith("Ejecutando")) $("retro-fichero").textContent = "";
   } catch (e) {
